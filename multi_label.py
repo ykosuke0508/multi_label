@@ -280,12 +280,6 @@ def multi_labeled_ness_info(S):
     print("LCard : {}".format(LCard(S)))
     print("PDist : {}".format(PDist(S)))
 
-class ClusteringBasedLabelPowerSets:
-    def __init__(self,classifier):
-        self.__classifier = classifier
-
-    # クラスタリングして、一つのクラスタごとにLPを適用する方法。
-
 class MetaStacking:
     def __init__(self,classifier):
         self.__classifier = classifier
@@ -385,62 +379,6 @@ def draw_heatmap(data, row_labels, column_labels, graph_name):
     plt.savefig('{}.png'.format(graph_name))
     return heatmap
 
-class InterdependenceModel:
-    def __init__(self, clf):
-        self.w = np.zeros(1)
-        self.num_of_labels = 0
-        self.clf = clf
-
-    def fit(self, X, S):
-        self.w = np.ones([X.shape[1] + S.shape[1], S.shape[1]])
-        self.num_of_labels = S.shape[1]
-        def logistic_function(x):
-            return 1 / (1 + np.exp(-x))
-
-        for i in range(self.num_of_labels):
-            # S_{i}をYとする
-            Y = S[:,i]
-            # XとS_{-j}を結合する
-            if i == 0:
-                new_X = np.c_[X,S[:,i+1:]]
-            elif i == self.num_of_labels - 1:
-                new_X = np.c_[X,S[:,:-1]]
-            else:
-                new_X = np.c_[X,S[:,:i]]
-                new_X = np.c_[new_X, S[:,i+1:]]
-
-            clf = copy.deepcopy(self.clf)
-            clf.fit(new_X, Y)
-            self.w[1:,i] = clf.coef_
-            self.w[1,i] = clf.intercept_
-
-    def predict(self, X, iter_num = 10, conv = 0.001, threshold = 0.5, method = "PI"):
-        if method == "PI":
-            answer = []
-            def log_function(x):
-                return - np.log(1 + np.exp(-x))
-            values = ((self.w[:-self.num_of_labels + 1].T).dot((np.c_[np.ones([X.shape[0]]),X]).T)).T
-            for i in range(X.shape[0]):
-                def z(y):
-                    return  values[i] + np.array([np.r_[y[:l],y[l+1:]].dot(self.w[-self.num_of_labels + 1:,l]) for l in range(self.num_of_labels)])
-
-                def func(y):
-                    return 1 / (1 + np.exp(-z(y)))
-
-                y = np.ones(self.num_of_labels)
-                old_y = np.zeros(self.num_of_labels)
-                for k in range(iter_num):
-                    old_y = y[:]
-                    y = func(y)
-                    if np.linalg.norm(old_y - y) < conv:
-                        break
-                    answer.append(y)
-
-            if threshold < 0:
-                return np.array(answer)
-            else:
-                return np.where(np.array(answer) > threshold,1, 0)
-
 def ML_cross_validation(filename, n_labels, n_split, clf_method, met, seed):
     """
     filename: 入力するcsvファイル
@@ -492,102 +430,7 @@ def ML_cross_validation(filename, n_labels, n_split, clf_method, met, seed):
     return np.array(e_values), np.array(e_times)
 
 def main():
-    argvs = sys.argv
-    train_df = read_csv2df("../csv/yeast-train.csv")
-    test_df = read_csv2df("../csv/yeast-test.csv")
-    # この下の部分は決め打ちになっているので注意 (現在はsceneデータセットに合わせたもの)
-    train_X = np.array(train_df.ix[:,:-14])
-    train_S = np.array(train_df.ix[:,-14:])
-    multi_labeled_ness_info(train_S)
-    test_X = np.array(test_df.ix[:,:-14])
-    test_S = np.array(test_df.ix[:,-14:])
-    metric = multi_label_evaluation_metric()
-    if argvs[1] == "experiment":
-        best = 0
-        C = 0
-        gamma = 0
-        cgmap = np.zeros([5,11])
-        for (i,c) in enumerate([0.01, 0.1, 1, 10, 100]):
-            for (j,g) in enumerate([0.00001, 0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000, 100000]):
-                #clf = ClassifierChains(svm.SVC(kernel='rbf', C=c, gamma=g))
-                clf = BinaryRelevance(svm.SVC(kernel='rbf', C=c, gamma=g))
-                order = [0,1,2,3,4,5]
-                #clf.fit(train_X, train_S, order)
-                clf.fit(train_X, train_S)
-                #pred_S = clf.predict(test_X)
-                pred_S = clf.predict(test_X)
-                cgmap[i,j] = metric.accuracy(test_S, pred_S)
-        print(cgmap)
-
-    if argvs[1] == "debag":
-        clf = LabelPowerSets(svm.SVC(kernel='rbf', C=1, gamma=0.1))
-        clf.fit(train_X,train_S)
-        pred_S = clf.predict(test_X)
-        metric = multi_label_evaluation_metric()
-        print("LP  : {}".format(metric.F_measure_macro(test_S, pred_S)))
-    #CBLP = ClusteringBasedLabelPowerSets(svm.SVC(kernel='rbf', C=1, gamma=0.1))
-    #CBLP.Clustering(train_X, train_S)
-    if argvs[1] == "all":
-        c = 1
-        g = 0.1
-        CC = ClassifierChains(svm.SVC(kernel='rbf', C=c, gamma=g))
-        BR = BinaryRelevance(svm.SVC(kernel='rbf', C=c, gamma=g))
-        LP = LabelPowerSets(svm.SVC(kernel='rbf', C=c, gamma=g))
-        MS = MetaStacking(svm.SVC(kernel='rbf', C=c, gamma=g))
-        ECC = EnsembleClassifierChains(svm.SVC(kernel='rbf', C=c, gamma=g))
-        EBR = EnsembleBinaryRelevance(svm.SVC(kernel='rbf', C=c, gamma=g))
-        order = [0,1,2,3,4,5]
-        print("Now Learning...")
-        CC.fit(train_X, train_S)
-        BR.fit(train_X, train_S)
-        LP.fit(train_X, train_S)
-        MS.fit(train_X, train_S)
-        ECC.fit(train_X, train_S, 3, 0.67)
-        EBR.fit(train_X, train_S, 3, 0.67)
-        print("Learning is finished!")
-        CC_pred_S = CC.predict(test_X)
-        BR_pred_S = BR.predict(test_X)
-        LP_pred_S = LP.predict(test_X)
-        MS_pred_S = MS.predict(test_X)
-
-        # thresholdを低めに設定したほうが精度がいいみたい
-        ECC_pred_S = ECC.predict(test_X, 0.5)
-        EBR_pred_S = EBR.predict(test_X, 0.5)
-
-        metric = multi_label_evaluation_metric()
-        print("CC  : {}".format(metric.accuracy(test_S, CC_pred_S)))
-        print("BR  : {}".format(metric.accuracy(test_S, BR_pred_S)))
-        print("LP  : {}".format(metric.accuracy(test_S, LP_pred_S)))
-        print("MS  : {}".format(metric.accuracy(test_S, MS_pred_S)))
-        print("ECC : {}".format(metric.accuracy(test_S, ECC_pred_S)))
-        print("EBR : {}".format(metric.accuracy(test_S, EBR_pred_S)))
-
-    if argvs[1] == "threshold":
-        c = 1
-        g = 0.1
-        metric = multi_label_evaluation_metric()
-        ECC = EnsembleClassifierChains(svm.SVC(kernel='rbf', C=c, gamma=g))
-        EBR = EnsembleBinaryRelevance(svm.SVC(kernel='rbf', C=c, gamma=g))
-        order = [0,1,2,3,4,5]
-        print("Now Learning...")
-        ECC.fit(train_X, train_S, 3, 0.67)
-        EBR.fit(train_X, train_S, 3, 0.67)
-        print("Learning is finished!")
-        # thresholdを低めに設定したほうが精度がいいみたい
-        ECC_list = []
-        EBR_list = []
-        for i in range(50):
-            ECC_list.append(metric.accuracy(test_S, ECC.predict(test_X, i / 50)))
-            EBR_list.append(metric.accuracy(test_S, EBR.predict(test_X, i / 50)))
-        plt.plot([i / 50 for i in range(50)], ECC_list)
-        plt.show()
-
-    if argvs[1] == "make":
-        arff2csv("medical/medical-train.arff", True)
+    pass
 
 if __name__ == '__main__':
-    #main()
-    e_values, e_times = ML_cross_validation("../csv_dataset/scene_csv/scene.csv", n_labels = 6, n_split = 10,clf_method=InterdependenceModel(LogisticRegression(C = 1)), met=multi_label_evaluation_metric().accuracy,seed=58)
-
-    print("Accuracy: %0.5f (+/- %0.5f)" % (e_values.mean(), e_values.std() * 2))
-    print("Time: %0.5f (+/- %0.5f)" % (e_times.mean(), e_times.std() * 2))
+    main()
